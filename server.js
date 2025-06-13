@@ -1,92 +1,116 @@
 import express from "express";
 import basicAuth from "./middleware/basicAuth.js";
 import dotenv from "dotenv";
-import axios from "axios";
-import fs, { writeFile } from "fs";
+import fs from "fs";
 import { CronJob } from "cron";
-import {
-  ordersSummary,
-  ordersInCSVFriendlyFormat,
-  createCSV,
-  fetchAndActualizeOrders,
-} from "./controllers.js";
+import { createCSV, fetchAndActualizeOrders } from "./controllers.js";
 
-dotenv.config(); // Load environment variables from .env file
+dotenv.config();
 const app = express();
 const port = 5555;
 
 app.use(express.json());
 
-// Middleware for basic authentication
+// Test authentication endpoint
 app.get("/testAuth", basicAuth, (req, res) => {
   res.json({ message: "Authentication successful" });
 });
 
-// Endpoint to fetch and save orders
-app.get("/download", basicAuth, (req, res) => {
+// Helper to read and parse orders.json safely
+function readOrdersFile(callback) {
   fs.readFile("./orders.json", "utf8", (err, data) => {
     if (err) {
-      console.error(err);
-      return res.status(500).send("error reading file");
+      return callback({ status: 500, message: "Error reading file" });
     }
     try {
-      let orders = JSON.parse(data);
+      const orders = JSON.parse(data);
       if (!Array.isArray(orders)) {
-        return res.status(400).send("Invalid data format");
+        return callback({ status: 400, message: "Invalid data format" });
       }
+      callback(null, orders);
+    } catch (e) {
+      callback({ status: 500, message: "Error parsing data" });
+    }
+  });
+}
 
-      // Filter orders based on minWorth and maxWorth if provided
-      const { minWorth, maxWorth } = req.query;
+// Download all orders, optionally filtered by minWorth/maxWorth
+app.get("/download", basicAuth, (req, res) => {
+  readOrdersFile((error, orders) => {
+    if (error) {
+      console.error(error.message);
+      return res.status(error.status).send(error.message);
+    }
 
-      if (minWorth || maxWorth) {
-        const min = minWorth ? parseFloat(minWorth) : 0;
-        const max = maxWorth ? parseFloat(maxWorth) : Infinity;
+    let filteredOrders = orders;
+    const { minWorth, maxWorth } = req.query;
 
-        orders = orders.filter((order) => {
-          const orderWorth = parseFloat(order.orderWorth);
-          return orderWorth >= min && orderWorth <= max;
-        });
-      }
+    // Validate query params
+    let min = 0,
+      max = Infinity;
+    if (minWorth !== undefined && isNaN(parseFloat(minWorth))) {
+      return res.status(400).send("minWorth must be a number");
+    }
+    if (maxWorth !== undefined && isNaN(parseFloat(maxWorth))) {
+      return res.status(400).send("maxWorth must be a number");
+    }
+    if (minWorth !== undefined) min = parseFloat(minWorth);
+    if (maxWorth !== undefined) max = parseFloat(maxWorth);
 
-      //console.log(Array.isArray(dataJSON));
-      const csv = createCSV(orders);
+    if (min > max) {
+      return res.status(400).send("minWorth cannot be greater than maxWorth");
+    }
+
+    filteredOrders = filteredOrders.filter((order) => {
+      const worth = parseFloat(order.orderWorth);
+      // Ignore orders without a valid orderWorth
+      if (isNaN(worth)) return false;
+      return worth >= min && worth <= max;
+    });
+
+    if (filteredOrders.length === 0) {
+      return res.status(404).send("No orders found for given filters");
+    }
+
+    try {
+      const csv = createCSV(filteredOrders);
       res.send(csv);
     } catch (err) {
       console.error(err);
-      res.status(500).send("error processing data");
+      res.status(500).send("Error generating CSV");
     }
   });
 });
 
+// Download a single order by ID
 app.get("/download/:id", basicAuth, (req, res) => {
   const id = req.params.id;
-  fs.readFile("./orders.json", "utf8", (err, data) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send("error reading file");
+  if (!id) {
+    return res.status(400).send("Order ID is required");
+  }
+
+  readOrdersFile((error, orders) => {
+    if (error) {
+      console.error(error.message);
+      return res.status(error.status).send(error.message);
     }
+
+    const order = orders.find((order) => order.orderID === id);
+    if (!order) {
+      return res.status(404).send("Order not found");
+    }
+
     try {
-      let orders = JSON.parse(data);
-      if (!Array.isArray(orders)) {
-        return res.status(400).send("Invalid data format");
-      }
-
-      // Filter orders based on the provided ID
-      const order = orders.find((order) => order.orderID === id);
-      if (!order) {
-        return res.status(404).send("Order not found");
-      }
-
       const csv = createCSV([order]);
       res.send(csv);
     } catch (err) {
       console.error(err);
-      res.status(500).send("error processing data");
+      res.status(500).send("Error generating CSV");
     }
   });
 });
 
-// actualize job every day at midnight
+// Schedule actualization job every day at midnight
 const job = new CronJob("0 0 0 * * *", fetchAndActualizeOrders());
 
 app.listen(port, () => {
