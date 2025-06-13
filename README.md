@@ -2,6 +2,7 @@
 
 A lightweight backend application for synchronizing, processing, and exporting sales data from the IdoSell platform. Designed as a daily job with secure REST API access.
 
+Created as part of a backend technical challenge.
 ---
 
 ## Features
@@ -107,11 +108,5 @@ AUTH_PASS=secret123
 * Axios (for external API calls)
 * json2csv (for CSV conversion)
 * cron (for daily tasks)
-
 ---
 
-## Contact
-
-Created as part of a backend technical challenge.
-
-Feel free to fork or contact if you have feedback!
