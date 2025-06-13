@@ -3,6 +3,7 @@
 A lightweight backend application for synchronizing, processing, and exporting sales data from the IdoSell platform. Designed as a daily job with secure REST API access.
 
 Created as part of a backend technical challenge.
+
 ---
 
 ## Features
